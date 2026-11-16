@@ -1,0 +1,359 @@
+diff --git a/content/public/browser/url_data_source.cc b/content/public/browser/url_data_source.cc
+index 804d79f4ab..d80e5bdfb2 100644
+--- a/content/public/browser/url_data_source.cc
++++ b/content/public/browser/url_data_source.cc
+@@ -108,6 +108,7 @@ std::string URLDataSource::GetContentSecurityPolicy(
+     case network::mojom::CSPDirectiveName::UpgradeInsecureRequests:
+     case network::mojom::CSPDirectiveName::TreatAsPublicAddress:
+     case network::mojom::CSPDirectiveName::WorkerSrc:
++    case network::mojom::CSPDirectiveName::BlockNamedAccess:
+     case network::mojom::CSPDirectiveName::ReportTo:
+     case network::mojom::CSPDirectiveName::Unknown:
+       return std::string();
+diff --git a/content/renderer/content_security_policy_util.cc b/content/renderer/content_security_policy_util.cc
+index a62cb6bd63..21faf4d1f4 100644
+--- a/content/renderer/content_security_policy_util.cc
++++ b/content/renderer/content_security_policy_util.cc
+@@ -113,7 +113,7 @@ network::mojom::ContentSecurityPolicyPtr BuildContentSecurityPolicy(
+       BuildCSPSource(policy_in.self_origin), std::move(raw_directives),
+       std::move(directives), policy_in.upgrade_insecure_requests,
+       policy_in.treat_as_public_address, policy_in.block_all_mixed_content,
+-      policy_in.sandbox,
++      policy_in.block_named_access, policy_in.sandbox,
+       network::mojom::ContentSecurityPolicyHeader::New(
+           policy_in.header.header_value.Utf8(), policy_in.header.type,
+           policy_in.header.source),
+@@ -148,6 +148,7 @@ blink::WebContentSecurityPolicy ToWebContentSecurityPolicy(
+           policy_in->upgrade_insecure_requests,
+           policy_in->treat_as_public_address,
+           policy_in->block_all_mixed_content,
++          policy_in->block_named_access,
+           policy_in->sandbox,
+           ToWebContentSecurityPolicyHeader(policy_in->header),
+           policy_in->use_reporting_api,
+diff --git a/content/renderer/content_security_policy_util_unittest.cc b/content/renderer/content_security_policy_util_unittest.cc
+index 3295d9313b..b7779e38a0 100644
+--- a/content/renderer/content_security_policy_util_unittest.cc
++++ b/content/renderer/content_security_policy_util_unittest.cc
+@@ -21,7 +21,7 @@ TEST(ContentSecurityPolicyUtilTest, BackAndForthConversion) {
+                                      false),
+       base::flat_map<CSPDirectiveName, std::string>(),
+       base::flat_map<CSPDirectiveName, network::mojom::CSPSourceListPtr>(),
+-      false, false, false, network::mojom::WebSandboxFlags::kNone,
++      false, false, false, false, network::mojom::WebSandboxFlags::kNone,
+       ContentSecurityPolicyHeader::New(
+           "my-csp", network::mojom::ContentSecurityPolicyType::kEnforce,
+           network::mojom::ContentSecurityPolicySource::kHTTP),
+@@ -100,7 +100,7 @@ TEST(ContentSecurityPolicyUtilTest, BackAndForthConversionForCSPSourceList) {
+       CSPSource::New("http", "www.example.org", 80, "", false, false),
+       base::flat_map<CSPDirectiveName, std::string>(),
+       base::flat_map<CSPDirectiveName, network::mojom::CSPSourceListPtr>(),
+-      false, false, false, network::mojom::WebSandboxFlags::kNone,
++      false, false, false, false, network::mojom::WebSandboxFlags::kNone,
+       network::mojom::ContentSecurityPolicyHeader::New(
+           "my-csp", network::mojom::ContentSecurityPolicyType::kEnforce,
+           network::mojom::ContentSecurityPolicySource::kHTTP),
+diff --git a/services/network/public/cpp/content_security_policy/content_security_policy.cc b/services/network/public/cpp/content_security_policy/content_security_policy.cc
+index e2a8ce30fd..bf05aae9df 100644
+--- a/services/network/public/cpp/content_security_policy/content_security_policy.cc
++++ b/services/network/public/cpp/content_security_policy/content_security_policy.cc
+@@ -169,6 +169,9 @@ CSPDirectiveName ToCSPDirectiveName(std::string_view name) {
+   if (base::EqualsCaseInsensitiveASCII(name, "report-to")) {
+     return CSPDirectiveName::ReportTo;
+   }
++  if (base::EqualsCaseInsensitiveASCII(name, "block-named-access")) {
++    return CSPDirectiveName::BlockNamedAccess;
++  }
+ 
+   return CSPDirectiveName::Unknown;
+ }
+@@ -207,6 +210,7 @@ bool SupportedInReportOnly(CSPDirectiveName directive) {
+     case CSPDirectiveName::TrustedTypes:
+     case CSPDirectiveName::Unknown:
+     case CSPDirectiveName::WorkerSrc:
++    case CSPDirectiveName::BlockNamedAccess:
+       return true;
+   };
+ }
+@@ -245,6 +249,7 @@ bool SupportedInMeta(CSPDirectiveName directive) {
+     case CSPDirectiveName::Unknown:
+     case CSPDirectiveName::UpgradeInsecureRequests:
+     case CSPDirectiveName::WorkerSrc:
++    case CSPDirectiveName::BlockNamedAccess:
+       return true;
+   };
+ }
+@@ -294,6 +299,7 @@ std::string ErrorMessage(CSPDirectiveName directive,
+     case CSPDirectiveName::TrustedTypes:
+     case CSPDirectiveName::UpgradeInsecureRequests:
+     case CSPDirectiveName::WorkerSrc:
++    case CSPDirectiveName::BlockNamedAccess:
+     case CSPDirectiveName::Unknown:
+       NOTREACHED();
+   };
+@@ -991,6 +997,11 @@ void AddContentSecurityPolicyFromHeader(
+         WarnIfDirectiveValueNotEmpty(directive, out->parsing_errors);
+         break;
+ 
++      case CSPDirectiveName::BlockNamedAccess:
++        out->block_named_access = true;
++        WarnIfDirectiveValueNotEmpty(directive, out->parsing_errors);
++        break;
++
+       case CSPDirectiveName::ReportTo:
+         out->use_reporting_api = true;
+         out->report_endpoints.clear();
+@@ -1347,6 +1358,7 @@ CSPDirectiveName CSPFallbackDirective(CSPDirectiveName directive,
+     case CSPDirectiveName::TreatAsPublicAddress:
+     case CSPDirectiveName::TrustedTypes:
+     case CSPDirectiveName::UpgradeInsecureRequests:
++    case CSPDirectiveName::BlockNamedAccess:
+       return CSPDirectiveName::Unknown;
+     case CSPDirectiveName::Unknown:
+       NOTREACHED();
+@@ -1735,6 +1747,8 @@ std::string ToString(CSPDirectiveName name) {
+       return "worker-src";
+     case CSPDirectiveName::ReportTo:
+       return "report-to";
++    case CSPDirectiveName::BlockNamedAccess:
++      return "block-named-access";
+     case CSPDirectiveName::Unknown:
+       return "";
+   }
+diff --git a/services/network/public/mojom/content_security_policy.mojom b/services/network/public/mojom/content_security_policy.mojom
+index 281f01a019..b7523db30c 100644
+--- a/services/network/public/mojom/content_security_policy.mojom
++++ b/services/network/public/mojom/content_security_policy.mojom
+@@ -124,6 +124,7 @@ enum CSPDirectiveName {
+   TrustedTypes,
+   UpgradeInsecureRequests,
+   WorkerSrc,
++  BlockNamedAccess,
+ };
+ 
+ enum CSPRequireTrustedTypesFor {
+@@ -171,6 +172,8 @@ struct ContentSecurityPolicy {
+   // https://www.w3.org/TR/mixed-content/#strict-opt-in
+   bool block_all_mixed_content = false;
+ 
++  bool block_named_access = false;
++
+   // https://www.w3.org/TR/CSP3/#directive-sandbox
+   // This uses the convention: kNone means "nothing is disallowed".
+   WebSandboxFlags sandbox = WebSandboxFlags.kNone;
+diff --git a/third_party/blink/public/platform/web_content_security_policy_struct.h b/third_party/blink/public/platform/web_content_security_policy_struct.h
+index 9e7c6827d9..0c17d2ecc6 100644
+--- a/third_party/blink/public/platform/web_content_security_policy_struct.h
++++ b/third_party/blink/public/platform/web_content_security_policy_struct.h
+@@ -101,6 +101,7 @@ struct WebContentSecurityPolicy {
+   bool upgrade_insecure_requests;
+   bool treat_as_public_address;
+   bool block_all_mixed_content;
++  bool block_named_access;
+   network::mojom::WebSandboxFlags sandbox =
+       network::mojom::WebSandboxFlags::kNone;
+   WebContentSecurityPolicyHeader header;
+diff --git a/third_party/blink/renderer/bindings/core/v8/local_window_proxy.cc b/third_party/blink/renderer/bindings/core/v8/local_window_proxy.cc
+index 57c48e2ca9..ca64c47b9b 100644
+--- a/third_party/blink/renderer/bindings/core/v8/local_window_proxy.cc
++++ b/third_party/blink/renderer/bindings/core/v8/local_window_proxy.cc
+@@ -583,6 +583,7 @@ v8::Local<v8::Value> GetNamedProperty(HTMLDocument* html_document,
+                                       const AtomicString& key,
+                                       v8::Local<v8::Object> creation_context,
+                                       v8::Isolate* isolate) {
++
+   if (!html_document->HasNamedItem(key))
+     return v8::Local<v8::Value>();
+ 
+@@ -590,6 +591,11 @@ v8::Local<v8::Value> GetNamedProperty(HTMLDocument* html_document,
+   if (items->IsEmpty())
+     return v8::Local<v8::Value>();
+ 
++  // Block named access and report violations if the CSP directive is enabled and at least one matching element would be returned
++  if(!html_document->GetExecutionContext()->GetContentSecurityPolicy()->AllowNamedAccess(key, false)){
++    return v8::Local<v8::Value>();
++  }
++
+   if (items->HasExactlyOneItem()) {
+     HTMLElement* element = items->Item(0);
+     DCHECK(element);
+diff --git a/third_party/blink/renderer/core/frame/csp/content_security_policy.cc b/third_party/blink/renderer/core/frame/csp/content_security_policy.cc
+index 241f7a99d2..b109291237 100644
+--- a/third_party/blink/renderer/core/frame/csp/content_security_policy.cc
++++ b/third_party/blink/renderer/core/frame/csp/content_security_policy.cc
+@@ -581,6 +581,7 @@ void ContentSecurityPolicy::ComputeInternalStateForParsedPolicy(
+       case CSPDirectiveName::TrustedTypes:
+       case CSPDirectiveName::UpgradeInsecureRequests:
+       case CSPDirectiveName::WorkerSrc:
++      case CSPDirectiveName::BlockNamedAccess:
+         break;
+ 
+       case CSPDirectiveName::Unknown:
+@@ -1181,6 +1182,35 @@ bool ContentSecurityPolicy::AllowTrustedTypeAssignmentFailure(
+   return allow;
+ }
+ 
++bool ContentSecurityPolicy::AllowNamedAccess(const AtomicString& name, bool win){
++  String messageEnforce = "Access to the property '" + name + "' on " +
++          String((win) ? "window" : "document") + " would have returned an element with "
++          "the same name or ID. This was prevented for security reasons.";
++  String messageReportOnly = "Access to the property '" + name + "' on " +
++          String((win) ? "window" : "document") + " returns an element with "
++          "the same name or ID.";
++
++  bool shouldAllow = true;
++  for (const auto& policy : policies_) { // Iterate over all policies
++    if(policy->block_named_access) {
++      const bool enforce = policy->header->type == network::mojom::ContentSecurityPolicyType::kEnforce;
++      
++      if(enforce) shouldAllow = false; // Block named access if policy is not report-only
++
++      LogToConsole((enforce) ? messageEnforce : messageReportOnly); // Log to console
++      
++      ReportViolation(
++          GetDirectiveName(CSPDirectiveName::BlockNamedAccess),
++          CSPDirectiveName::BlockNamedAccess, (enforce) ? messageEnforce : messageReportOnly, KURL(),
++          policy->report_endpoints, policy->use_reporting_api,
++          policy->header->header_value, policy->header->type,
++          ContentSecurityPolicyViolationType::kInlineViolation, nullptr,
++          /*contextFrame=*/nullptr); // Raise `securitupolicyviolation` event and send violation report to `repot-uri` or `report-to` endpoints
++    }
++  }
++  return shouldAllow;
++}
++
+ bool ContentSecurityPolicy::IsActive() const {
+   return !policies_.empty();
+ }
+@@ -1690,6 +1720,8 @@ const char* ContentSecurityPolicy::GetDirectiveName(CSPDirectiveName type) {
+       return "upgrade-insecure-requests";
+     case CSPDirectiveName::WorkerSrc:
+       return "worker-src";
++    case CSPDirectiveName::BlockNamedAccess:
++      return "block-named-access";
+ 
+     case CSPDirectiveName::Unknown:
+       NOTREACHED();
+@@ -1759,6 +1791,8 @@ CSPDirectiveName ContentSecurityPolicy::GetDirectiveType(const String& name) {
+     return CSPDirectiveName::UpgradeInsecureRequests;
+   if (name == "worker-src")
+     return CSPDirectiveName::WorkerSrc;
++  if (name == "block-named-access")
++    return CSPDirectiveName::BlockNamedAccess;
+ 
+   return CSPDirectiveName::Unknown;
+ }
+diff --git a/third_party/blink/renderer/core/frame/csp/content_security_policy.h b/third_party/blink/renderer/core/frame/csp/content_security_policy.h
+index 369b4f8b7b..2681df131e 100644
+--- a/third_party/blink/renderer/core/frame/csp/content_security_policy.h
++++ b/third_party/blink/renderer/core/frame/csp/content_security_policy.h
+@@ -342,6 +342,8 @@ class CORE_EXPORT ContentSecurityPolicy final
+       const String& sample_prefix = String(),
+       std::optional<base::UnguessableToken> issue_id = std::nullopt);
+ 
++  bool AllowNamedAccess(const AtomicString& name, bool win);
++
+   void UsesHashAlgorithm(IntegrityAlgorithm algorithm);
+ 
+   void SetOverrideAllowInlineStyle(bool);
+diff --git a/third_party/blink/renderer/core/frame/csp/csp_directive_list.cc b/third_party/blink/renderer/core/frame/csp/csp_directive_list.cc
+index 9a1632c21a..b0c26cdb1f 100644
+--- a/third_party/blink/renderer/core/frame/csp/csp_directive_list.cc
++++ b/third_party/blink/renderer/core/frame/csp/csp_directive_list.cc
+@@ -639,6 +639,7 @@ void ReportViolationForCheckSource(
+     case CSPDirectiveName::TreatAsPublicAddress:
+     case CSPDirectiveName::TrustedTypes:
+     case CSPDirectiveName::UpgradeInsecureRequests:
++    case CSPDirectiveName::BlockNamedAccess:
+     case CSPDirectiveName::Unknown:
+       NOTREACHED();
+   }
+diff --git a/third_party/blink/renderer/core/frame/window_properties.cc b/third_party/blink/renderer/core/frame/window_properties.cc
+index ad1672fcee..e65b6e5f4d 100644
+--- a/third_party/blink/renderer/core/frame/window_properties.cc
++++ b/third_party/blink/renderer/core/frame/window_properties.cc
+@@ -16,6 +16,7 @@
+ #include "third_party/blink/renderer/core/frame/local_dom_window.h"
+ #include "third_party/blink/renderer/core/html/html_collection.h"
+ #include "third_party/blink/renderer/core/html/html_document.h"
++#include "third_party/blink/renderer/core/frame/csp/content_security_policy.h"
+ 
+ namespace blink {
+ 
+@@ -80,6 +81,12 @@ v8::Local<v8::Value> WindowProperties::AnonymousNamedGetter(
+   if (!has_named_item && !has_id_item) {
+     return v8::Local<v8::Value>();
+   }
++
++  // Block named access and report violations if the CSP directive is enabled and at least one matching element would be returned
++  if(!doc->GetExecutionContext()->GetContentSecurityPolicy()->AllowNamedAccess(name, true)) {
++      return v8::Local<v8::Value>();
++  }
++
+   window->ReportCoopAccess("named");
+   window->RecordWindowProxyAccessMetrics(
+       mojom::blink::WindowProxyAccessType::kAnonymousNamedGetter);
+diff --git a/third_party/blink/renderer/platform/loader/fetch/policy_container_utils.cc b/third_party/blink/renderer/platform/loader/fetch/policy_container_utils.cc
+index a25969d959..8c94d5e7c2 100644
+--- a/third_party/blink/renderer/platform/loader/fetch/policy_container_utils.cc
++++ b/third_party/blink/renderer/platform/loader/fetch/policy_container_utils.cc
+@@ -74,6 +74,7 @@ WebContentSecurityPolicy ToWebContentSecurityPolicy(
+       policy.upgrade_insecure_requests,
+       policy.treat_as_public_address,
+       policy.block_all_mixed_content,
++      policy.block_named_access,
+       policy.sandbox,
+       {policy.header->header_value, policy.header->type, policy.header->source},
+       policy.use_reporting_api,
+@@ -169,7 +170,7 @@ network::mojom::blink::ContentSecurityPolicyPtr FromWebContentSecurityPolicy(
+       ConvertSourceToMojoBlink(policy_in.self_origin),
+       std::move(raw_directives), std::move(directives),
+       policy_in.upgrade_insecure_requests, policy_in.treat_as_public_address,
+-      policy_in.block_all_mixed_content, policy_in.sandbox,
++      policy_in.block_all_mixed_content, policy_in.block_named_access, policy_in.sandbox,
+       network::mojom::blink::ContentSecurityPolicyHeader::New(
+           policy_in.header.header_value, policy_in.header.type,
+           policy_in.header.source),
+diff --git a/third_party/blink/renderer/platform/loader/fetch/policy_container_utils_test.cc b/third_party/blink/renderer/platform/loader/fetch/policy_container_utils_test.cc
+index 57e03db586..0b74664931 100644
+--- a/third_party/blink/renderer/platform/loader/fetch/policy_container_utils_test.cc
++++ b/third_party/blink/renderer/platform/loader/fetch/policy_container_utils_test.cc
+@@ -30,7 +30,7 @@ TEST(PolicyContainerUtilsTest, ContentSecurityPolicyBackAndForthConversion) {
+                                             false, false),
+       HashMap<CSPDirectiveName, String>(),
+       HashMap<CSPDirectiveName, network::mojom::blink::CSPSourceListPtr>(),
+-      false, false, false, network::mojom::blink::WebSandboxFlags::kNone,
++      false, false, false, false, network::mojom::blink::WebSandboxFlags::kNone,
+       ContentSecurityPolicyHeader::New(
+           "my-csp", network::mojom::blink::ContentSecurityPolicyType::kEnforce,
+           network::mojom::blink::ContentSecurityPolicySource::kHTTP),
+@@ -56,6 +56,7 @@ TEST(PolicyContainerUtilsTest, ContentSecurityPolicyBackAndForthConversion) {
+       [](ContentSecurityPolicy& csp) { csp.upgrade_insecure_requests = true; },
+       [](ContentSecurityPolicy& csp) { csp.treat_as_public_address = true; },
+       [](ContentSecurityPolicy& csp) { csp.block_all_mixed_content = true; },
++      [](ContentSecurityPolicy& csp) { csp.block_named_access = true; },
+       [](ContentSecurityPolicy& csp) {
+         csp.sandbox = network::mojom::blink::WebSandboxFlags::kPointerLock |
+                       network::mojom::blink::WebSandboxFlags::kDownloads;
+@@ -112,7 +113,7 @@ TEST(PolicyContainerUtilsTest, BackAndForthConversionForCSPSourceList) {
+       CSPSource::New("http", "www.example.org", 80, "", false, false),
+       HashMap<CSPDirectiveName, String>(),
+       HashMap<CSPDirectiveName, network::mojom::blink::CSPSourceListPtr>(),
+-      false, false, false, network::mojom::blink::WebSandboxFlags::kNone,
++      false, false, false, false, network::mojom::blink::WebSandboxFlags::kNone,
+       network::mojom::blink::ContentSecurityPolicyHeader::New(
+           "my-csp", network::mojom::blink::ContentSecurityPolicyType::kEnforce,
+           network::mojom::blink::ContentSecurityPolicySource::kHTTP),
+diff --git a/third_party/blink/renderer/platform/network/http_parsers.cc b/third_party/blink/renderer/platform/network/http_parsers.cc
+index 333ff90439..c0060a57cf 100644
+--- a/third_party/blink/renderer/platform/network/http_parsers.cc
++++ b/third_party/blink/renderer/platform/network/http_parsers.cc
+@@ -241,7 +241,7 @@ blink::ContentSecurityPolicyPtr ConvertToBlink(
+   return blink::ContentSecurityPolicy::New(
+       ConvertToBlink(in->self_origin), ConvertToBlink(in->raw_directives),
+       ConvertToBlink(in->directives), in->upgrade_insecure_requests,
+-      in->treat_as_public_address, in->block_all_mixed_content, in->sandbox,
++      in->treat_as_public_address, in->block_all_mixed_content, in->block_named_access, in->sandbox,
+       ConvertToBlink(in->header), in->use_reporting_api,
+       ConvertToBlink(in->report_endpoints), in->require_trusted_types_for,
+       ConvertToBlink(in->trusted_types), ConvertToBlink(in->parsing_errors));

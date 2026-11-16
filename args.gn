@@ -1,0 +1,5 @@
+# Set build arguments here. See `gn help buildargs`.
+is_debug = false
+symbol_level = 1
+is_official_build = true
+chrome_pgo_phase = 0
