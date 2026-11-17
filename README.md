@@ -13,4 +13,5 @@ A PoC Chromium implementation for `block-named-access`, a new CSP directive for 
   - `$ git apply --reject --whitespace=fix /path/to/block_named_access.patch`
 - Rebuild: `autoninja -C out/Default chrome`
 - Launch modified Chromium: `$ out/Default/chrome --no-sandbox`
-- Visit our [test page](https://kostasdrk.github.io/block-named-access/) that demonstrates the directive's enforcement and reporting capabilities.
+- Visit the [test page](https://kostasdrk.github.io/block-named-access/) that demonstrates the directive's enforcement and reporting capabilities.
+  - You can launch an unmodified Chromium alongside the modified one to observe the differences.
