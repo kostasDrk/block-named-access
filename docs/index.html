@@ -4,14 +4,65 @@
 	<meta charset="utf-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1">
 	<meta http-equiv="Content-Security-Policy" content="block-named-access">
-	<title>`block-named-access` validation</title>
+	<title>`block-named-access` demo</title>
 </head>
 <body>
-	<script>
-		console.log("TEST");
+	<h3>Task 1.b</h3>
+	<p>
+		When opening this page with a regular Chromium browser, the following error message should be logged in the console:<br>
+		<i>"Unrecognized Content-Security-Policy directive 'block-named-access'."</i><br>
+		Instead, the modified Chromium recognizes the directive and the message does not appear.
+	</p>
+
+
+	<h3>Task 1.c</h3>
+	<p>
+		This page contains two named elements to demonstrate the directive's enforcement.<br>
+		<ul>
+			<li>A dummy <a id="myLink" href="#">link</a> (&lt;a id='myLink'&gt;)</li>
+			<li>A dummy image: <img name="myImg" src="#"/> (&lt;img name='myImg'/&gt;)</li>
+		</ul>
+		In a regular browser, each of them clobbers the <strong>window.myLink</strong> and <strong>document.myImg</strong> JavaScript properties, respectively. When accessing any of them the corresponding named element is returned, which is the root cause of DOM clobbering vulnerabilities.<br>
+		In the modified Chromium, however, the clobbering is prevented, thus eliminating the vulnerability's root cause. Specifically, the properties return <strong>undefined</strong> when accessed, and a detailed security error message is logged in the console.
+	</p>
+
+	<h3>Task 1.d</h3>
+	<p>
+		Demonstrating `block-named-access` in a <strong>Content-Security-Policy-Report-Only</strong> deployment (no enforcement) is not possible due to:
+		<ul>
+			<li>GitHub Pages not allowing to set custom headers.</li>
+			<li><a href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Content-Security-Policy-Report-Only">Content-Security-Policy-Report-Only cannot be set from a &lt;meta&gt; tag</a> (as is the case for a regular CSP, i.e., this page).</li>
+		</ul>
+		However, it can be trivially replicated by deploying this page in a local HTTP server, removing the &lt;meta&gt; element with the regular CSP deployment from its &lt;head&gt;, and setting the response header:<br> <strong>Content-Security-Policy-Report-Only: block-named-access</strong><br>
+		In a report-only deployment, the directive will not prevent the properties from being clobbered, but will log the warning messages and raise any violation events (see Task 1.e).
+	</p>
+
+	<h3>Task 1.e</h3>
+	<p>
+		Whenever a violation is detected by `block-named-access` it is reported both as a <strong>securitypolicyviolation</strong> JavaScript event (see console) and is sent as a violation report in the corresponding `report-uri` or `report-to` endpoints.
+	</p>
+
+	<script type="text/javascript" nonce="abc">
+		window.addEventListener("securitypolicyviolation", (e) => {
+			console.warn(`Caught \`block-named-access\` violation event: ${serializeEvent(e)}`);
+		});
+
+		function serializeEvent(event) {
+			const proto = Object.getPrototypeOf(event);
+			const result = {};
+
+			for (const key of Object.getOwnPropertyNames(proto)) {
+			    if (key === "constructor") continue;
+			    try { result[key] = event[key]; }
+			    catch (e) {}
+			}
+
+			return JSON.stringify(result);
+		}
+
+		console.log(`Accessing window.myLink: ${window.myLink}`);
+		console.log(`Accessing document.myImg: ${document.myImg}`);
 	</script>
-	<div>
-		TEST
-	</div>
+
 </body>
 </html>
