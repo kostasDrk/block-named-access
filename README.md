@@ -8,7 +8,7 @@ A PoC Chromium implementation for `block-named-access`, a new CSP directive for 
   - **Note:** This should take several hours.
 - Run the built executable to ensure everything is OK: `$ out/Default/chrome --no-sandbox`
 - Apply the `block_named_access.patch` file from this repo to make all necessary changes for the `block-named-access` CSP directive:
-  - `$ cd /path/to/chromium/checkout/src/`
+  - `$ cd /path/to/chromium/src/`
   - `$ git apply --check /path/to/block_named_access.patch` (this should return no errors)
   - `$ git apply --reject --whitespace=fix /path/to/block_named_access.patch`
 - Rebuild: `autoninja -C out/Default chrome`
